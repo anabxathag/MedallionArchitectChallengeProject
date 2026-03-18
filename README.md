@@ -33,6 +33,16 @@ graph LR
 
 ---
 
+## 📊 Data Schema
+
+The project implements a Star Schema in the Gold layer, optimized for analytical queries.
+
+![Data Warehouse Schema](schema.jpg)
+
+*Note: The schema includes core dimensions (Customers, Products, Sellers, Location, Date) and a central Fact table (Orders), along with specialized Feature tables for behavioral analysis.*
+
+---
+
 ## 🛠️ Tech Stack
 
 -   **Processing**: [Apache Spark 4.0](https://spark.apache.org/) (PySpark)
