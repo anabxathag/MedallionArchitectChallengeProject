@@ -1,7 +1,7 @@
 import argparse
 import datetime
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, TimestampType, IntegerType, DoubleType
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType, IntegerType, DoubleType, DecimalType, ShortType, LongType, BooleanType
 
 # --- Global Configs ---
 MAX_WORKERS = 4
@@ -46,6 +46,21 @@ SOURCE_DB_CONF = {
     "user": "admin",
     "password": "admin",
 }
+
+# --- Kafka Streaming Configuration ---
+KAFKA_BOOTSTRAP_SERVERS = "kafka:9092"
+REVIEWS_TOPIC = "olist_reviews_stream"
+
+# Schema for incoming JSON reviews via Kafka
+REVIEWS_STREAM_SCHEMA = StructType([
+    StructField("review_id", StringType(), False),
+    StructField("order_id", StringType(), False),
+    StructField("review_score", IntegerType(), True),
+    StructField("review_comment_title", StringType(), True),
+    StructField("review_comment_message", StringType(), True),
+    StructField("review_creation_date", TimestampType(), True),
+    StructField("review_answer_timestamp", TimestampType(), True)
+])
 
 # --- High-Fidelity Source Schemas ---
 TABLE_SCHEMAS = {
@@ -130,16 +145,214 @@ TABLE_SCHEMAS = {
     ])
 }
 
+# --- Silver Layer Schemas (Post-Transformation) ---
+SILVER_TABLE_SCHEMAS = {
+    "customers": StructType([
+        StructField("customer_id", StringType(), False),
+        StructField("customer_unique_id", StringType(), False),
+        StructField("customer_zip_code_prefix", StringType(), True),
+        StructField("customer_city", StringType(), True),
+        StructField("customer_state", StringType(), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ]),
+    "geolocation": StructType([
+        StructField("geolocation_zip_code_prefix", StringType(), True),
+        StructField("geolocation_lat", DecimalType(11, 8), True),
+        StructField("geolocation_lng", DecimalType(11, 8), True),
+        StructField("geolocation_city", StringType(), True),
+        StructField("geolocation_state", StringType(), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ]),
+    "order_items": StructType([
+        StructField("order_id", StringType(), False),
+        StructField("order_item_id", IntegerType(), False),
+        StructField("product_id", StringType(), False),
+        StructField("seller_id", StringType(), False),
+        StructField("shipping_limit_date", TimestampType(), True),
+        StructField("price", DecimalType(10, 2), True),
+        StructField("freight_value", DecimalType(10, 2), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ]),
+    "order_payments": StructType([
+        StructField("order_id", StringType(), False),
+        StructField("payment_sequential", ShortType(), False),
+        StructField("payment_type", StringType(), True),
+        StructField("payment_installments", ShortType(), True),
+        StructField("payment_value", DecimalType(10, 2), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ]),
+    "order_reviews": StructType([
+        StructField("review_id", StringType(), False),
+        StructField("order_id", StringType(), False),
+        StructField("review_score", ShortType(), True),
+        StructField("review_comment_title", StringType(), True),
+        StructField("review_comment_message", StringType(), True),
+        StructField("review_creation_date", TimestampType(), True),
+        StructField("review_answer_timestamp", TimestampType(), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ]),
+    "orders": StructType([
+        StructField("order_id", StringType(), False),
+        StructField("customer_id", StringType(), False),
+        StructField("order_status", StringType(), True),
+        StructField("order_purchase_timestamp", TimestampType(), True),
+        StructField("order_approved_at", TimestampType(), True),
+        StructField("order_delivered_carrier_date", TimestampType(), True),
+        StructField("order_delivered_customer_date", TimestampType(), True),
+        StructField("order_estimated_delivery_date", TimestampType(), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ]),
+    "products": StructType([
+        StructField("product_category_name", StringType(), True),
+        StructField("product_id", StringType(), False),
+        StructField("product_name_lenght", ShortType(), True),
+        StructField("product_description_lenght", ShortType(), True),
+        StructField("product_photos_qty", ShortType(), True),
+        StructField("product_weight_g", IntegerType(), True),
+        StructField("product_length_cm", ShortType(), True),
+        StructField("product_height_cm", ShortType(), True),
+        StructField("product_width_cm", ShortType(), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("product_category_name_english", StringType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ]),
+    "sellers": StructType([
+        StructField("seller_id", StringType(), False),
+        StructField("seller_zip_code_prefix", StringType(), True),
+        StructField("seller_city", StringType(), True),
+        StructField("seller_state", StringType(), True),
+        StructField("source_updated_at", TimestampType(), True),
+        StructField("_ingested_at", TimestampType(), True),
+        StructField("_silver_processed_at", TimestampType(), True)
+    ])
+}
+
+# --- Gold Layer Schemas (Modeling Output) ---
+GOLD_TABLE_SCHEMAS = {
+    "dim_products": StructType([
+        StructField("product_id", StringType(), False),
+        StructField("product_category_name", StringType(), True),
+        StructField("product_category_name_english", StringType(), True),
+        StructField("product_weight_g", IntegerType(), True),
+        StructField("product_length_cm", ShortType(), True),
+        StructField("product_height_cm", ShortType(), True),
+        StructField("product_width_cm", ShortType(), True),
+        StructField("start_date", TimestampType(), True),
+        StructField("end_date", TimestampType(), True),
+        StructField("is_current", BooleanType(), True)
+    ]),
+    "dim_sellers": StructType([
+        StructField("seller_id", StringType(), False),
+        StructField("seller_zip_code_prefix", StringType(), True),
+        StructField("seller_city", StringType(), True),
+        StructField("seller_state", StringType(), True),
+        StructField("seller_lat", DecimalType(11, 8), True),
+        StructField("seller_lng", DecimalType(11, 8), True),
+        StructField("start_date", TimestampType(), True),
+        StructField("end_date", TimestampType(), True),
+        StructField("is_current", BooleanType(), True)
+    ]),
+    "dim_date": StructType([
+        StructField("date_key", TimestampType(), True),
+        StructField("year", IntegerType(), True),
+        StructField("month", IntegerType(), True),
+        StructField("day", IntegerType(), True),
+        StructField("quarter", IntegerType(), True),
+        StructField("day_of_week", IntegerType(), True),
+        StructField("is_weekend", BooleanType(), True),
+        StructField("month_name", StringType(), True),
+        StructField("is_br_holiday", BooleanType(), True)
+    ]),
+    "dim_customers": StructType([
+        StructField("customer_unique_id", StringType(), False),
+        StructField("customer_zip_code_prefix", StringType(), True),
+        StructField("customer_city", StringType(), True),
+        StructField("customer_state", StringType(), True),
+        StructField("customer_lat", DecimalType(11, 8), True),
+        StructField("customer_lng", DecimalType(11, 8), True),
+        StructField("start_date", TimestampType(), True),
+        StructField("end_date", TimestampType(), True),
+        StructField("is_current", BooleanType(), True)
+    ]),
+    "fact_reviews": StructType([
+        StructField("review_id", StringType(), False),
+        StructField("order_id", StringType(), False),
+        StructField("review_score", ShortType(), True),
+        StructField("review_creation_date", TimestampType(), True),
+        StructField("review_answer_timestamp", TimestampType(), True),
+        StructField("response_time_seconds", LongType(), True)
+    ]),
+    "fact_payments": StructType([
+        StructField("order_id", StringType(), False),
+        StructField("payment_sequential", ShortType(), False),
+        StructField("payment_type", StringType(), True),
+        StructField("payment_installments", ShortType(), True),
+        StructField("payment_value", DecimalType(10, 2), True),
+        StructField("payment_sk", StringType(), True)
+    ]),
+    "fact_sales": StructType([
+        StructField("order_id", StringType(), False),
+        StructField("order_item_id", IntegerType(), False),
+        StructField("customer_id", StringType(), True),
+        StructField("customer_unique_id", StringType(), True),
+        StructField("product_id", StringType(), False),
+        StructField("seller_id", StringType(), False),
+        StructField("order_status", StringType(), True),
+        StructField("order_purchase_timestamp", TimestampType(), True),
+        StructField("order_delivered_customer_date", TimestampType(), True),
+        StructField("item_price", DecimalType(10, 2), True),
+        StructField("item_freight", DecimalType(10, 2), True),
+        StructField("delivery_delay_days", ShortType(), True),
+        StructField("sales_sk", StringType(), True)
+    ]),
+    "feature_seller_reliability": StructType([
+        StructField("seller_id", StringType(), False),
+        StructField("total_orders", LongType(), True),
+        StructField("total_sales_value", DecimalType(15, 2), True),
+        StructField("avg_delivery_time_days", DecimalType(10, 2), True)
+    ]),
+    "feature_product_performance": StructType([
+        StructField("product_id", StringType(), False),
+        StructField("total_sales", LongType(), True),
+        StructField("total_revenue", DecimalType(15, 2), True),
+        StructField("avg_rating", DecimalType(3, 2), True)
+    ]),
+    "feature_customer_rfm": StructType([
+        StructField("customer_unique_id", StringType(), False),
+        StructField("frequency", IntegerType(), True),
+        StructField("monetary", DecimalType(12, 2), True),
+        StructField("last_purchase", TimestampType(), True),
+        StructField("recency", IntegerType(), True)
+    ])
+}
+
 def get_job_args():
     """Parses command line arguments for Spark jobs."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_id", help="Airflow run_id", default=f"manual_run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
     parser.add_argument("--holidays", help="JSON string of Brazilian holidays", default=None)
+    parser.add_argument("--discord_webhook", help="Discord Webhook URL for alerting", default=None)
     args, unknown = parser.parse_known_args()
     return args
 
 def get_run_id():
     return get_job_args().run_id
+
+def get_discord_webhook():
+    return get_job_args().discord_webhook
 
 def get_holidays_arg():
     import json
@@ -158,7 +371,9 @@ def get_spark_session(app_name):
         .config("spark.jars", ALL_JARS) \
         .config("spark.driver.extraClassPath", CP_JARS) \
         .config("spark.executor.extraClassPath", CP_JARS) \
-        .config("spark.sql.shuffle.partitions", "1")
+        .config("spark.sql.shuffle.partitions", "1") \
+        .config("spark.driver.memory", "1024m") \
+        .config("spark.executor.memory", "1024m")
     
     for key, value in S3A_CONF.items():
         builder = builder.config(key, value)

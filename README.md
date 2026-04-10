@@ -13,10 +13,12 @@ graph TD
     subgraph "Source Systems"
         S1[(Production DB)] --> |JDBC Incremental| B
         S2[Holiday API] --> |REST| G
+        S3[Web App] --> |JSON Events| K[Kafka Broker]
     end
 
     subgraph "Data Platform (Local/Docker)"
         B(Bronze: Raw Parquet) --> C(Silver: Cleansed & Deduplicated)
+        K --> |Spark Streaming| C
         C --> D(Gold: Star Schema & SCD Type 2)
         
         subgraph "Observability"
@@ -24,6 +26,7 @@ graph TD
             Audit <--> |Logging| C
             Audit <--> |Logging| D
             D --> |Drift Check| Audit
+            K -.-> UI[Kafka-UI]
         end
     end
 
@@ -44,8 +47,8 @@ graph TD
 
 ### 🛰️ The Three Layers:
 1.  **🥉 Bronze (Raw)**: Captures the original data from source files "as-is" into MinIO.
-2.  **🥈 Silver (Cleansed)**: Deduplication, null handling, data typing, and schema validation.
-3.  **🥇 Gold (Curated)**: Business-level aggregates, Star Schema (Facts & Dimensions), and Feature Tables for ML.
+2.  **🥈 Silver (Cleansed)**: Deduplication, null handling, precision data typing, and **Final-State Schema Enforcement**.
+3.  **🥇 Gold (Curated)**: Business-level aggregates, Star Schema (Facts & Dimensions), and Feature Tables with **Modeled Schema Validation**.
 
 ---
 
@@ -63,7 +66,7 @@ The project implements a Star Schema in the Gold layer, optimized for analytical
 
 1.  **Observability & Governance**:
     *   **Audit Logging**: Every pipeline run is logged to a PostgreSQL `audit.run_logs` table (timing, row counts, status).
-    *   **Data Quality (DQ)**: Automated checks for PK uniqueness, null values, and **Row-Count Drift Detection**.
+    *   **Data Quality (DQ)**: Automated **Multi-Layered Schema Validation** (Bronze, Silver, Gold), PK uniqueness checks, null value monitoring, and **Row-Count Drift Detection**.
     *   **Alerting**: Real-time Discord notifications for pipeline success and failures.
 2.  **Advanced Data Modeling**:
     *   **SCD Type 2**: History tracking for Customers, Products, and Sellers.
@@ -73,6 +76,12 @@ The project implements a Star Schema in the Gold layer, optimized for analytical
     *   **Incremental Loading (CDC)**: Watermark-based ingestion fetching only new/updated records.
     *   **Idempotency**: All jobs are designed to be safe for re-execution.
     *   **Parallel Execution**: Multi-threaded Spark jobs for maximized throughput.
+4.  **Real-Time Streaming Layer (Lambda Architecture)**:
+    *   **Kafka-based Ingestion**: Real-time events (e.g., Product Reviews) streamed via Kafka with a custom **Self-Managing Lifecycle**.
+    *   **Coordinated Shutdown**: Uses a signal-file mechanism (`stop_simulation.signal`) to synchronize the Python Producer and Spark Consumer, ensuring the consumer only stops once the simulation is complete.
+    *   **Fault-Tolerant Monitoring**: Implements a **Patience Timeout** logic that prevents the streaming consumer from hanging if records are missed (e.g., when using `latest` offsets).
+    *   **Structured Streaming**: Spark-native streaming job that cleanses and merges live events into the Silver tier with full audit logging support.
+    *   **Unified Analytical View**: The Gold layer automatically unions historical batch data with real-time streams for up-to-the-minute analysis.
 
 ---
 
@@ -135,6 +144,7 @@ docker-compose up -d
 | **Airflow UI** | [http://localhost:8088](http://localhost:8088) | `admin` | `admin` |
 | **MinIO Console** | [http://localhost:9001](http://localhost:9001) | `admin` | `password` |
 | **Spark Master** | [http://localhost:8080](http://localhost:8080) | - | - |
+| **Kafka UI** | [http://localhost:8090](http://localhost:8090) | - | - |
 
 ---
 
@@ -154,8 +164,8 @@ Before running the main pipeline, you must simulate the production environment:
 Once the source is seeded, trigger the **`medallion_pipeline`** DAG. The sequence is:
 1.  **`fetch_holidays`**: Pulls external API data for `dim_date` enrichment.
 2.  **`bronze_ingestion`**: Performs incremental JDBC fetching from the Source DB using watermarks.
-3.  **`silver_processing`**: Executes deduplication, schema enforcement, and precision casting.
-4.  **`gold_modeling`**: Builds the Fact/Dimension/Feature tables with **SCD Type 2** logic.
+3.  **`silver_processing`**: Executes deduplication, precision casting, and **Final-State Silver Schema Enforcement**.
+4.  **`gold_modeling`**: Builds the Fact/Dimension/Feature tables with **SCD Type 2** logic and **Star-Schema Structural Validation**.
 5.  **`export_to_bigquery`**: Synchronizes the final Gold layer to **Google BigQuery**.
 
 ---
@@ -170,6 +180,7 @@ This project focuses on measurable "Senior-level" KPIs across performance, cost,
 | **Data Throughput** | **~300% Concurrency Gain** | Used `ThreadPoolExecutor` to process 8+ tables in parallel stages instead of sequential loops. |
 | **Cloud Cost Savings** | **~80% Optimization** | Reduced BigQuery storage fees by keeping Bronze/Silver layers in on-prem MinIO (S3) storage. |
 | **Storage Efficiency** | **10x Compression** | Achieved significant footprint reduction via Parquet format and precise schema typing (Short/Decimal). |
+| **Data Integrity** | **Zero Structural Drift** | Implemented **Fail-Fast Schema Validation** at every layer (Bronze/Silver/Gold) to prevent corrupted data propagation. |
 | **Observability** | **<5s Detection (MTTD)** | Automated industry-standard alerting via Discord webhooks and row-count drift detection. |
 
 ---

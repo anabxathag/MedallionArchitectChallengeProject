@@ -1,5 +1,5 @@
 from pyspark.sql import functions as F, Window
-from config import get_spark_session, get_run_id, JobTracker, get_last_success_timestamp, GOLD_PRIMARY_KEYS, DataQuality, MAX_WORKERS, BRAZILIAN_HOLIDAYS
+from config import get_spark_session, get_run_id, JobTracker, get_last_success_timestamp, GOLD_PRIMARY_KEYS, GOLD_TABLE_SCHEMAS, DataQuality, MAX_WORKERS, BRAZILIAN_HOLIDAYS
 
 from pyspark.sql.types import DecimalType, ShortType, IntegerType, TimestampType, LongType
 
@@ -100,6 +100,10 @@ def write_gold(df, table_name, source_df=None):
         pks = GOLD_PRIMARY_KEYS.get(table_name, [])
         
         # --- Data Quality Checks ---
+        expected_gold_schema = GOLD_TABLE_SCHEMAS.get(table_name)
+        if not DataQuality.check_schema_mismatch(df, expected_gold_schema):
+            raise ValueError(f"SCHEMA MISMATCH: Gold output for '{table_name}' does not match expected schema.")
+            
         drift_val, is_drift_alert = DataQuality.check_row_count_drift(df, table_name, spark)
         
         dq_results = {
@@ -221,6 +225,11 @@ def write_gold_scd2(df_new, table_name, pks, attr_cols):
 
         # 2. Calculate Final State
         df_final = calculate_scd2(df_existing, df_new, pks, attr_cols)
+        
+        # 3. Data Quality: Schema Validation
+        expected_gold_schema = GOLD_TABLE_SCHEMAS.get(table_name)
+        if not DataQuality.check_schema_mismatch(df_final, expected_gold_schema):
+            raise ValueError(f"SCHEMA MISMATCH: Gold output for '{table_name}' does not match expected schema.")
             
         df_final.coalesce(1).write.mode("overwrite").parquet(target_path)
         df_existing.unpersist()
@@ -233,6 +242,12 @@ def write_gold_scd2(df_new, table_name, pks, attr_cols):
         df_final = df_new.withColumn("start_date", current_ts) \
             .withColumn("end_date", F.lit(None).cast("timestamp")) \
             .withColumn("is_current", F.lit(True))
+            
+        # Data Quality: Initial Schema Validation
+        expected_gold_schema = GOLD_TABLE_SCHEMAS.get(table_name)
+        if not DataQuality.check_schema_mismatch(df_final, expected_gold_schema):
+             raise ValueError(f"SCHEMA MISMATCH: Gold initial output for '{table_name}' does not match expected schema.")
+             
         df_final.coalesce(1).write.mode("overwrite").parquet(target_path)
         explore_table(table_name, df_new, tracker=tracker)
         tracker.end_job("SUCCESS", input_rows=df_new.count(), output_rows=df_final.count())
@@ -431,7 +446,16 @@ if __name__ == "__main__":
     df_geolocation = spark.read.parquet(f"{SILVER_PATH}/geolocation/").cache()
     df_order_items = spark.read.parquet(f"{SILVER_PATH}/order_items/").cache()
     df_order_payments = spark.read.parquet(f"{SILVER_PATH}/order_payments/").cache()
-    df_order_reviews = spark.read.parquet(f"{SILVER_PATH}/order_reviews/").cache()
+    
+    # --- Unified Reviews (Batch + Stream) ---
+    df_batch_reviews = spark.read.parquet(f"{SILVER_PATH}/order_reviews/").cache()
+    try:
+        df_stream_reviews = spark.read.parquet(f"{SILVER_PATH}/reviews_stream/")
+        df_order_reviews = df_batch_reviews.unionByName(df_stream_reviews, allowMissingColumns=True).cache()
+        print("  [SUCCESS] Unified Batch + Kafka Streaming reviews loaded.")
+    except:
+        df_order_reviews = df_batch_reviews.cache()
+        print("  [INFO] No streaming reviews found. Proceeding with Batch only.")
     df_orders = spark.read.parquet(f"{SILVER_PATH}/orders/").cache()
     df_products = spark.read.parquet(f"{SILVER_PATH}/products/").cache()
     df_sellers = spark.read.parquet(f"{SILVER_PATH}/sellers/").cache()

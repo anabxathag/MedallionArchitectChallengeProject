@@ -3,7 +3,7 @@ from pyspark.sql.functions import col, trim, split, lower, upper, avg, first, ex
 
 from pyspark.sql.types import DecimalType, ShortType, IntegerType, TimestampType
 
-from config import get_spark_session, get_run_id, JobTracker, get_last_success_timestamp, PRIMARY_KEYS, DataQuality, MAX_WORKERS
+from config import get_spark_session, get_run_id, JobTracker, get_last_success_timestamp, PRIMARY_KEYS, TABLE_SCHEMAS, SILVER_TABLE_SCHEMAS, DataQuality, MAX_WORKERS
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
@@ -314,6 +314,12 @@ def process_table(table_name):
 
         # 6. Upsert to Silver
         df = df.withColumn("_silver_processed_at", current_timestamp())
+        
+        # 6. Data Quality: Silver Schema Validation
+        expected_silver_schema = SILVER_TABLE_SCHEMAS.get(table_name)
+        if not DataQuality.check_schema_mismatch(df, expected_silver_schema):
+            raise ValueError(f"SCHEMA MISMATCH: Silver output for '{table_name}' does not match expected schema.")
+            
         upsert_to_silver(df, table_name, tracker=tracker)
         output_count = df.count()
         

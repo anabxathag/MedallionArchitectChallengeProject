@@ -31,7 +31,11 @@ ENV PATH="${SPARK_HOME}/bin:${PATH}"
 RUN mkdir -p /opt/spark/extra_jars
 RUN ln -s /opt/spark/extra_jars/hadoop-aws-3.4.1.jar /opt/spark/jars/hadoop-aws-3.4.1.jar \
     && ln -s /opt/spark/extra_jars/bundle-2.23.19.jar /opt/spark/jars/bundle-2.23.19.jar \
-    && ln -s /opt/spark/extra_jars/postgresql-42.7.4.jar /opt/spark/jars/postgresql-42.7.4.jar
+    && ln -s /opt/spark/extra_jars/postgresql-42.7.4.jar /opt/spark/jars/postgresql-42.7.4.jar \
+    && ln -s /opt/spark/extra_jars/kafka-clients-3.9.0.jar /opt/spark/jars/kafka-clients-3.9.0.jar \
+    && ln -s /opt/spark/extra_jars/spark-sql-kafka-0-10_2.13-4.0.2.jar /opt/spark/jars/spark-sql-kafka-0-10_2.13-4.0.2.jar \
+    && ln -s /opt/spark/extra_jars/spark-token-provider-kafka-0-10_2.13-4.0.2.jar /opt/spark/jars/spark-token-provider-kafka-0-10_2.13-4.0.2.jar \
+    && ln -s /opt/spark/extra_jars/commons-pool2-2.12.0.jar /opt/spark/jars/commons-pool2-2.12.0.jar
 
 USER airflow
 
@@ -45,4 +49,5 @@ RUN pip install \
     polars \
     pyarrow \
     s3fs \
-    psycopg2-binary
+    psycopg2-binary \
+    confluent-kafka

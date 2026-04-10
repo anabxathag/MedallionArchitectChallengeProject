@@ -93,15 +93,15 @@ with DAG(
         python_callable=fetch_br_holidays
     )
 
-    bronze = BashOperator(
-        task_id="bronze_ingestion",
-        bash_command="spark-submit /opt/spark/jobs/bronze_ingest.py --run_id {{ run_id }}"
-    )
+    # bronze = BashOperator(
+    #     task_id="bronze_ingestion",
+    #     bash_command="spark-submit /opt/spark/jobs/bronze_ingest.py --run_id {{ run_id }}"
+    # )
 
-    silver = BashOperator(
-        task_id="silver_processing",
-        bash_command="spark-submit /opt/spark/jobs/silver_transform.py --run_id {{ run_id }}"
-    )
+    # silver = BashOperator(
+    #     task_id="silver_processing",
+    #     bash_command="spark-submit /opt/spark/jobs/silver_transform.py --run_id {{ run_id }}"
+    # )
 
     gold = BashOperator(
         task_id="gold_modeling",
@@ -119,4 +119,5 @@ with DAG(
         """
     )
 
-    fetch_holidays >> bronze >> silver >> gold >> export_to_bq
+    # fetch_holidays >> bronze >> silver >> gold >> export_to_bq
+    fetch_holidays >> gold >> export_to_bq

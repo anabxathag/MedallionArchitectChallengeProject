@@ -1,7 +1,7 @@
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pyspark.sql.functions import current_timestamp
-from config import get_spark_session, get_run_id, JobTracker, get_last_success_timestamp, SOURCE_DB_CONF, PRIMARY_KEYS, MAX_WORKERS
+from config import get_spark_session, get_run_id, JobTracker, get_last_success_timestamp, SOURCE_DB_CONF, PRIMARY_KEYS, TABLE_SCHEMAS, DataQuality, MAX_WORKERS
 
 from logger import ParallelLogger
 
@@ -43,6 +43,11 @@ def ingest_table(table_name):
             .option("password", SOURCE_DB_CONF["password"]) \
             .option("driver", SOURCE_DB_CONF["driver"]) \
             .load().cache()
+        
+        # 4. Data Quality: Schema Validation
+        expected_schema = TABLE_SCHEMAS.get(table_name)
+        if not DataQuality.check_schema_mismatch(df, expected_schema):
+            raise ValueError(f"SCHEMA MISMATCH: Source table '{table_name}' structure has changed.")
 
         input_count = df.count()
         tracker.log(f"BRONZE: Found {input_count} new records for {table_name}")
