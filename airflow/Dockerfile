@@ -36,4 +36,13 @@ RUN ln -s /opt/spark/extra_jars/hadoop-aws-3.4.1.jar /opt/spark/jars/hadoop-aws-
 USER airflow
 
 # Install Airflow Spark provider
-RUN pip install apache-airflow-providers-apache-spark==5.6.0 pyspark==${SPARK_VERSION}
+RUN pip install \
+    apache-airflow-providers-apache-spark==5.6.0 \
+    pyspark==${SPARK_VERSION} \
+    boto3 \
+    google-cloud-bigquery \
+    google-cloud-storage \
+    polars \
+    pyarrow \
+    s3fs \
+    psycopg2-binary

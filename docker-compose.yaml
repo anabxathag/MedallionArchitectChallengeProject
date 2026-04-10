@@ -17,18 +17,31 @@ services:
     volumes:
       - minio_data:/lake
 
-  postgres:
+  # --- Metadata & Audit Store (Postgres) ---
+  logging_db:
     image: postgres:17.9
-    container_name: warehouse
+    container_name: logging_db
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
-      POSTGRES_DB: retail_dw
+      POSTGRES_DB: postgres # Create this database automatically on startup and then run all initialization scripts inside it.
     ports:
       - "5432:5432"
     volumes:
-      - ./warehouse/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - postgres_data:/var/lib/postgresql/data
+      - ./warehouse/init_multiple_dbs.sql:/docker-entrypoint-initdb.d/init_multiple_dbs.sql:ro
+      - metadata_postgres_data:/var/lib/postgresql/data
+
+  source-db:
+    image: postgres:17.9
+    container_name: source-db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: production_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - source_postgres_data:/var/lib/postgresql/data
 
   spark-master:
     image: apache/spark:4.0.2
@@ -36,10 +49,13 @@ services:
     ports:
       - "8080:8080"
       - "7077:7077"
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/credentials.json
     volumes:
       - ./spark/jobs:/opt/spark/jobs
       - ./raw:/raw:ro
       - ./spark/extra_jars:/opt/spark/extra_jars
+      - ./application_default_credentials.json:/opt/spark/credentials.json:ro
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
 
   spark-worker:
@@ -47,10 +63,13 @@ services:
     container_name: spark-worker
     depends_on:
       - spark-master
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/credentials.json
     volumes:
       - ./spark/jobs:/opt/spark/jobs
       - ./raw:/raw:ro
       - ./spark/extra_jars:/opt/spark/extra_jars
+      - ./application_default_credentials.json:/opt/spark/credentials.json:ro
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
 
   airflow:
@@ -59,26 +78,37 @@ services:
       dockerfile: airflow/Dockerfile
     container_name: airflow
     depends_on:
-      - postgres
+      - logging_db
       - minio
+      - source-db
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://admin:admin@postgres/retail_dw
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://admin:admin@logging_db/airflow_db
       - SPARK_HOME=/opt/spark
       - _AIRFLOW_WWW_USER_USERNAME=admin
       - _AIRFLOW_WWW_USER_PASSWORD=admin
       - _AIRFLOW_WWW_USER_CREATE=true
       - AIRFLOW__CORE__EXECUTE_TASKS_NEW_PYTHON_INTERPRETER=True
+      - AIRFLOW_UID=502
+      - PYTHONWARNINGS=ignore
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/credentials.json
+      - AIRFLOW_VAR_DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - AIRFLOW_VAR_GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - AIRFLOW_VAR_BQ_DATASET=${BQ_DATASET}
+      - AIRFLOW_VAR_BQ_TEMP_BUCKET=${BQ_TEMP_BUCKET}
     ports:
       - "8088:8080"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
       - ./raw:/raw:ro
       - ./spark/jobs:/opt/spark/jobs
       - ./spark/extra_jars:/opt/spark/extra_jars
+      - ./application_default_credentials.json:/opt/spark/credentials.json:ro
     command: >
       bash -c " airflow db migrate && airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin || true; airflow scheduler & exec airflow webserver"
 
 volumes:
-  postgres_data:
+  metadata_postgres_data:
   minio_data:
+  source_postgres_data:

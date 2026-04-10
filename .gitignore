@@ -20,3 +20,7 @@ airflow/plugins/
 
 # Spark
 spark/extra_jars/*
+
+# Credentials
+.env
+application_default_credentials.json
