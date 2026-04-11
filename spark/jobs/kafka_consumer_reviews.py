@@ -59,7 +59,7 @@ def main():
     Subscribes to Kafka 'olist_reviews_stream' and writes to Silver-tier Parquet.
     """
     run_id = get_run_id()
-    spark = get_spark_session(f"Kafka-Consumer-{run_id}")
+    spark = get_spark_session(f"Kafka-Consumer-{run_id}", include_kafka=True)
     tracker = JobTracker(spark, "kafka_consumer_reviews", run_id)
     
     # Register the Metrics Listener

@@ -12,11 +12,20 @@ POSTGRES_JAR = f"{EXTRA_JARS_PATH}/postgresql-42.7.4.jar"
 HADOOP_AWS_JAR = f"{EXTRA_JARS_PATH}/hadoop-aws-3.4.1.jar"
 AWS_SDK_JAR = f"{EXTRA_JARS_PATH}/bundle-2.23.19.jar"
 
+# Kafka Streaming JARs
+KAFKA_SQL_JAR = f"{EXTRA_JARS_PATH}/spark-sql-kafka-0-10_2.13-4.0.2.jar"
+KAFKA_CLIENTS_JAR = f"{EXTRA_JARS_PATH}/kafka-clients-3.9.0.jar"
+KAFKA_TOKEN_JAR = f"{EXTRA_JARS_PATH}/spark-token-provider-kafka-0-10_2.13-4.0.2.jar"
+COMMONS_POOL_JAR = f"{EXTRA_JARS_PATH}/commons-pool2-2.12.0.jar"
+
 # --- JAR Inclusion Strategy ---
 # Spark 4.0.2 requires jars for the session, plus extraClassPath for the driver/executors
 # to ensure S3AFileSystem classes are available during initial Hadoop FS initialization.
-ALL_JARS = f"{POSTGRES_JAR},{HADOOP_AWS_JAR},{AWS_SDK_JAR}"
-CP_JARS = f"{POSTGRES_JAR}:{HADOOP_AWS_JAR}:{AWS_SDK_JAR}"
+BASE_JARS = f"{POSTGRES_JAR},{HADOOP_AWS_JAR},{AWS_SDK_JAR}"
+KAFKA_JARS = f"{KAFKA_SQL_JAR},{KAFKA_CLIENTS_JAR},{KAFKA_TOKEN_JAR},{COMMONS_POOL_JAR}"
+
+BASE_CP = f"{POSTGRES_JAR}:{HADOOP_AWS_JAR}:{AWS_SDK_JAR}"
+KAFKA_CP = f"{KAFKA_SQL_JAR}:{KAFKA_CLIENTS_JAR}:{KAFKA_TOKEN_JAR}:{COMMONS_POOL_JAR}"
 
 # --- S3A / MinIO Configuration ---
 S3A_CONF = {
@@ -364,13 +373,16 @@ def get_holidays_arg():
             print("WARNING: Failed to parse holidays argument. Falling back.")
     return None
 
-def get_spark_session(app_name):
-    """Creates a SparkSession with global JARs and S3A configurations."""
+def get_spark_session(app_name, include_kafka=False):
+    """Creates a SparkSession with selective JARs and S3A configurations."""
+    all_jars = f"{BASE_JARS},{KAFKA_JARS}" if include_kafka else BASE_JARS
+    cp_jars = f"{BASE_CP}:{KAFKA_CP}" if include_kafka else BASE_CP
+
     builder = SparkSession.builder \
         .appName(app_name) \
-        .config("spark.jars", ALL_JARS) \
-        .config("spark.driver.extraClassPath", CP_JARS) \
-        .config("spark.executor.extraClassPath", CP_JARS) \
+        .config("spark.jars", all_jars) \
+        .config("spark.driver.extraClassPath", cp_jars) \
+        .config("spark.executor.extraClassPath", cp_jars) \
         .config("spark.sql.shuffle.partitions", "1") \
         .config("spark.driver.memory", "1024m") \
         .config("spark.executor.memory", "1024m")

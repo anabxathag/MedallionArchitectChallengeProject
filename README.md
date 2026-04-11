@@ -131,6 +131,10 @@ Since the Spark JARs are excluded via `.gitignore`, you must download them manua
 | **PostgreSQL JDBC** | 42.7.4 | [Download](https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar) |
 | **Hadoop AWS** | 3.4.1 | [Download](https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.4.1/hadoop-aws-3.4.1.jar) |
 | **AWS SDK Bundle** | 2.23.19 | [Download](https://repo1.maven.org/maven2/software/amazon/awssdk/bundle/2.23.19/bundle-2.23.19.jar) |
+| **Spark-SQL Kafka** | 4.0.2 | [Download](https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.13/4.0.2/spark-sql-kafka-0-10_2.13-4.0.2.jar) |
+| **Kafka Clients** | 3.9.0 | [Download](https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.9.0/kafka-clients-3.9.0.jar) |
+| **Spark Token Kafka** | 4.0.2 | [Download](https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.13/4.0.2/spark-token-provider-kafka-0-10_2.13-4.0.2.jar) |
+| **Commons Pool 2** | 2.12.0 | [Download](https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.12.0/commons-pool2-2.12.0.jar) |
 
 ### 3. Launch the Infrastructure
 ```bash
@@ -167,6 +171,16 @@ Once the source is seeded, trigger the **`medallion_pipeline`** DAG. The sequenc
 3.  **`silver_processing`**: Executes deduplication, precision casting, and **Final-State Silver Schema Enforcement**.
 4.  **`gold_modeling`**: Builds the Fact/Dimension/Feature tables with **SCD Type 2** logic and **Star-Schema Structural Validation**.
 5.  **`export_to_bigquery`**: Synchronizes the final Gold layer to **Google BigQuery**.
+
+### 3. Real-Time Stream Ingestion (Lambda Simulation)
+The platform features a real-time review stream that can run concurrently with the batch pipeline or as a standalone simulation.
+1.  Locate the DAG **`streaming_pipeline`** in the Airflow UI.
+2.  Trigger it. The workflow includes:
+    *   **`reset_streaming_data`**: Wipes previous simulation state in MinIO and S3 checkpoints.
+    *   **`init_kafka_topic`**: Ensures the `olist_reviews_stream` topic exists.
+    *   **`review_consumer_task`**: Launches the **Structured Streaming** consumer (`kafka_consumer_reviews.py`) which ingests Kafka events into the Silver tier.
+    *   **`review_producer_task`**: Executes the **Producer Simulation** (`kafka_producer_reviews.py`) sending a batch of Olist reviews to Kafka.
+3.  **Graceful Shutdown**: The consumer automatically detects when the producer is finished via a signal file and shuts itself down once the target row count is met.
 
 ---
 
