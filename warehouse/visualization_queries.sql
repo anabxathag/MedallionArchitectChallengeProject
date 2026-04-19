@@ -1,147 +1,103 @@
 -- ==============================================================================
--- Medallion Architecture: Data Warehouse Visualization Queries
--- Dataset: Olist E-commerce (Brazilian Ecommerce)
--- Schema: gold
+-- BIGQUERY ANALYTICAL QUERIES FOR OLIST GOLD LAYER
+-- Dataset: Brazilian E-Commerce Public Dataset by Olist
 -- ==============================================================================
 
--- 🚀 [SECTION 1] EXECUTIVE DASHBOARD (GLOBAL KPIs)
--- Goal: High-level overview of business performance.
-
--- 1.1 Total Business Metrics
-SELECT 
-    COUNT(order_id) AS total_orders,
-    SUM(total_payment_value) AS total_revenue,
-    AVG(total_payment_value) AS avg_order_value,
-    SUM(total_items) AS total_items_sold,
-    AVG(avg_review_score) AS global_avg_satisfaction
-FROM gold.fact_orders;
-
--- 1.2 Revenue by Order Status
-SELECT 
-    order_status,
-    COUNT(*) AS order_count,
-    ROUND(SUM(total_payment_value)::numeric, 2) AS revenue
-FROM gold.fact_orders
-GROUP BY order_status
-ORDER BY revenue DESC;
-
-
--- 📈 [SECTION 2] GROWTH & TREND ANALYSIS
--- Goal: Understand sales cycles and performance over time.
-
--- 2.1 Monthly Revenue Growth Trend
+-- 📊 1. TOp-Line Performance: Revenue & Order Volume Over Time
+-- This query helps visualize sales trends and seasonality (e.g., Black Friday peaks).
 SELECT 
     d.year,
+    d.month_name,
     d.month,
-    ROUND(SUM(f.total_payment_value)::numeric, 2) AS monthly_revenue,
-    COUNT(f.order_id) AS monthly_orders
-FROM gold.fact_orders f
-JOIN gold.dim_date d ON f.order_purchase_timestamp = d.date_key
-GROUP BY d.year, d.month
-ORDER BY d.year, d.month;
+    ROUND(SUM(f.item_price), 2) as total_revenue,
+    COUNT(DISTINCT f.order_id) as total_orders,
+    ROUND(AVG(f.item_price), 2) as avg_order_value
+FROM `<your-dataset-name>.fact_sales` f
+JOIN `<your-dataset-name>.dim_date` d 
+  ON DATE(TIMESTAMP_MICROS(DIV(f.order_purchase_timestamp, 1000))) = d.date_key
+WHERE f.order_status = 'delivered'
+GROUP BY 1, 2, 3
+ORDER BY 1 DESC, 3 DESC;
 
--- 2.2 Weekday vs Weekend Sales Performance
+
+-- 📊 2. Product Category Analysis: High-Value vs. High-Volume
+-- Identifies which categories drive the most revenue for the platform.
 SELECT 
-    d.weekday_name,
-    COUNT(f.order_id) AS total_orders,
-    ROUND(AVG(f.total_payment_value)::numeric, 2) AS avg_order_value
-FROM gold.fact_orders f
-JOIN gold.dim_date d ON f.order_purchase_timestamp = d.date_key
-GROUP BY d.weekday_name, d.day_of_week
-ORDER BY d.day_of_week;
-
-
--- 📦 [SECTION 3] PRODUCT & CATEGORY ANALYTICS
--- Goal: Identify top-selling categories and low-performing products.
-
--- 3.1 Top 10 Categories by Revenue (Optimized)
--- Goal: Identify top-selling categories using aggregated product performance metrics.
-SELECT 
-    p.product_category_name_english AS category,
-    SUM(pp.total_sales) AS total_units_sold,
-    ROUND(SUM(pp.total_revenue)::numeric, 2) AS total_revenue
-FROM gold.feature_product_performance pp
-JOIN gold.dim_products p ON pp.product_id = p.product_id
+    p.product_category_name_english,
+    COUNT(f.sales_sk) as units_sold,
+    ROUND(SUM(f.item_price), 2) as total_revenue,
+    ROUND(AVG(f.item_price), 2) as avg_unit_price
+FROM `<your-dataset-name>.fact_sales` f
+JOIN `<your-dataset-name>.dim_products` p ON f.product_id = p.product_id
+WHERE p.is_current = true -- Only latest product info
 GROUP BY 1
 ORDER BY total_revenue DESC
 LIMIT 10;
 
--- 3.2 Product Performance Matrix (Sales vs. Rating)
+
+-- 📊 3. Customer RFM Segmentation
+-- Segments customers based on Recency, Frequency, and Monetary values.
+-- This can be used to create dashboards for "Champions", "At Risk", and "New" customers.
+WITH rfm_scores AS (
+    SELECT 
+        customer_unique_id,
+        monetary,
+        frequency,
+        recency,
+        -- Simple scoring (1-5) using quantiles
+        NTILE(5) OVER (ORDER BY recency DESC) as r_score,
+        NTILE(5) OVER (ORDER BY frequency ASC) as f_score,
+        NTILE(5) OVER (ORDER BY monetary ASC) as m_score
+    FROM `<your-dataset-name>.feature_customer_rfm`
+)
 SELECT 
-    product_id,
-    total_sales,
-    total_revenue,
-    avg_rating
-FROM gold.feature_product_performance
-WHERE total_sales > 10
-ORDER BY avg_rating DESC, total_revenue DESC
-LIMIT 20;
-
-
--- 👥 [SECTION 4] CUSTOMER & GEOSPATIAL INSIGHTS
--- Goal: Where are our customers and how do they behave?
-
--- 4.1 Top States by Revenue & Customer Density
-SELECT 
-    customer_state,
-    COUNT(DISTINCT customer_unique_id) AS unique_customers,
-    ROUND(SUM(monetary)::numeric, 2) AS lifetime_value
-FROM gold.feature_customer_profile cp
-JOIN gold.dim_customers c ON cp.customer_id = c.customer_id
-GROUP BY customer_state
-ORDER BY lifetime_value DESC;
-
--- 4.2 Customer RFM Segments (Recency, Frequency, Monetary)
-SELECT 
-    customer_id,
+    customer_unique_id,
+    r_score,
+    f_score,
+    m_score,
+    (r_score + f_score + m_score) as total_rfm_score,
     CASE 
-        WHEN recency < 30 AND frequency > 5 THEN 'Champions'
-        WHEN recency < 60 THEN 'Active'
-        WHEN recency > 180 THEN 'At Risk'
-        ELSE 'Neutral'
-    END AS customer_segment,
-    frequency,
-    monetary,
-    recency
-FROM gold.feature_customer_profile
-ORDER BY monetary DESC
-LIMIT 50;
+        WHEN (r_score + f_score + m_score) >= 13 THEN 'Champion'
+        WHEN (r_score + f_score + m_score) >= 9 THEN 'Loyal'
+        WHEN (r_score + f_score + m_score) >= 5 THEN 'Potential'
+        ELSE 'At Risk'
+    END as customer_segment
+FROM rfm_scores
+ORDER BY total_rfm_score DESC;
 
 
--- 🚚 [SECTION 5] LOGISTICS & RELIABILITY
--- Goal: Monitor shipping performance and seller quality.
-
--- 5.1 Seller Reliability Leaderboard
+-- 📊 4. Logistics & Delivery Performance by State
+-- Analyzes which regions experience the most delivery delays.
+-- Corrected: Joins on customer_unique_id after Gold model refactor.
 SELECT 
-    seller_id,
-    total_orders,
-    ROUND(total_sales_value::numeric, 2) AS total_sales,
-    ROUND(avg_delivery_time_days::numeric, 2) AS avg_days_to_deliver
-FROM gold.feature_seller_reliability
-WHERE avg_delivery_time_days > 0
-ORDER BY total_orders DESC, avg_days_to_deliver ASC
+    c.customer_state,
+    ROUND(AVG(f.delivery_delay_days), 1) as avg_delivery_time,
+    COUNT(f.order_id) as total_shipments,
+    ROUND(SUM(CASE WHEN f.delivery_delay_days > 20 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as delayed_shipment_pct
+FROM `<your-dataset-name>.fact_sales` f
+JOIN `<your-dataset-name>.dim_customers` c 
+  ON f.customer_unique_id = c.customer_unique_id
+WHERE c.is_current = true
+GROUP BY 1
+ORDER BY avg_delivery_time DESC;
+
+
+-- 📊 5. Seller Reliability vs. Customer Satisfaction
+-- Correlations between delivery speed and review scores.
+SELECT
+  s.seller_id,
+  r.total_orders,
+  r.avg_delivery_time_days,
+  ROUND(AVG(rev.review_score), 2) AS avg_customer_rating
+FROM `<your-dataset-name>.feature_seller_reliability` r
+JOIN `<your-dataset-name>.fact_sales` fs
+  ON r.seller_id = fs.seller_id
+JOIN `<your-dataset-name>.fact_reviews` rev
+  ON fs.order_id = rev.order_id
+JOIN `<your-dataset-name>.dim_sellers` s
+  ON r.seller_id = s.seller_id
+WHERE s.is_current = TRUE
+GROUP BY 1, 2, 3
+HAVING total_orders > 10
+ORDER BY avg_customer_rating ASC
 LIMIT 20;
-
--- 5.2 Delivery Time Distribution
-SELECT 
-    CASE 
-        WHEN avg_delivery_time_days < 5 THEN 'Over-speed (<5 days)'
-        WHEN avg_delivery_time_days BETWEEN 5 AND 10 THEN 'Normal (5-10 days)'
-        WHEN avg_delivery_time_days BETWEEN 10 AND 20 THEN 'Slow (10-20 days)'
-        ELSE 'Very Slow (>20 days)'
-    END AS delivery_speed_category,
-    COUNT(*) AS seller_count
-FROM gold.feature_seller_reliability
-WHERE avg_delivery_time_days > 0
-GROUP BY 1;
-
--- 5.3 Seller Distribution by Geolocation (Audit)
--- Goal: Map seller density using official geolocation city and state names.
-SELECT 
-    l.geolocation_state,
-    l.geolocation_city,
-    COUNT(DISTINCT s.seller_id) AS seller_count
-FROM gold.dim_sellers s
-JOIN gold.dim_location l ON s.seller_zip_code_prefix = l.geolocation_zip_code_prefix
-GROUP BY 1, 2
-ORDER BY seller_count DESC;
