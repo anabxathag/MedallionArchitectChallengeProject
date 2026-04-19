@@ -73,7 +73,8 @@ The project implements a Star Schema in the Gold layer, optimized for analytical
     *   **Star Schema**: Optimization for BI tool performance.
     *   **Feature Engineering**: Pre-computed RFM (Recency, Frequency, Monetary) tables.
 3.  **Real-World Reliability**:
-    *   **Incremental Loading (CDC)**: Watermark-based ingestion fetching only new/updated records.
+    *   **Incremental Loading (CDC)**: Watermark-based ingestion fetching only new/updated records to minimize I/O and compute overhead.
+        *   **Architectural Trade-off**: This pipeline prioritizes performance and scalability by avoiding "Full Scan" hard-delete detection. In a production environment, hard-deletes are typically propagated via **Log-Based CDC** (e.g., Debezium) or **Soft Deletes** (`is_deleted` flags) to ensure the Medallion layers stay synchronized without the O(N) cost of full-table comparisons.
     *   **Idempotency**: All jobs are designed to be safe for re-execution.
     *   **Parallel Execution**: Multi-threaded Spark jobs for maximized throughput.
 4.  **Real-Time Streaming Layer (Lambda Architecture)**:
@@ -82,6 +83,21 @@ The project implements a Star Schema in the Gold layer, optimized for analytical
     *   **Fault-Tolerant Monitoring**: Implements a **Patience Timeout** logic that prevents the streaming consumer from hanging if records are missed (e.g., when using `latest` offsets).
     *   **Structured Streaming**: Spark-native streaming job that cleanses and merges live events into the Silver tier with full audit logging support.
     *   **Unified Analytical View**: The Gold layer automatically unions historical batch data with real-time streams for up-to-the-minute analysis.
+
+---
+
+## 🔍 Architectural Deep Dives
+
+For a detailed technical walkthrough of each phase (ideal for interview preparation), explore the following documentation:
+
+| Phase | Focus Area | Detailed Documentation |
+| :--- | :--- | :--- |
+| **Phase 1** | **Source & Governance** | [Source Simulation & Audit Logic](docs/01_source_audit.md) |
+| **Phase 2** | **Bronze Ingestion** | [Incremental Watermarking & Parallelism](docs/02_bronze_ingestion.md) |
+| **Phase 3** | **Silver Transformation** | [Precision Tuning & CDC Upserts](docs/03_silver_transformation.md) |
+| **Phase 4** | **Gold Modeling** | [Star Schema & SCD Type 2](docs/04_gold_modeling.md) |
+| **Phase 5** | **Streaming Lambda** | [Real-Time Lifecycle & Coordination](docs/05_streaming_lambda.md) |
+| **Phase 6** | **Cloud & Observability** | [BigQuery Sync & Discord Alerting](docs/06_observability_cloud.md) |
 
 ---
 

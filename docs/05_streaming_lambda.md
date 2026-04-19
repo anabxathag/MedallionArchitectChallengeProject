@@ -1,6 +1,6 @@
-# Streaming Lifecycle & Coordination Logic
+# Phase 5: Real-Time Streaming & Lambda Architecture
 
-This document details the coordinated shutdown and resilience mechanisms used in the real-time review streaming pipeline.
+This phase implements a **Lambda Architecture** simulation, combining historical batch data with real-time feedback (Product Reviews) using Kafka and Spark Structured Streaming.
 
 ---
 
@@ -48,6 +48,14 @@ A critical challenge arises when using `.option("startingOffsets", "latest")`. I
 This coordination ensures that the `job_audit` table in PostgreSQL always contains accurate final metrics:
 - **Total Input/Output**: Correctly reflects what Spark actually processed.
 - **Job Status**: Properly transitions from `RUNNING` to `SUCCESS` instead of staying stuck or being marked as `FAILED` by an Airflow timeout.
+
+---
+
+## 🥈 5. Streaming-to-Silver Path
+The consumer doesn't write to Bronze. It performs a "Micro-Transformation" on the fly.
+
+- **On-the-fly Cleansing**: It parses the JSON payload, validates the schema using the shared `config.py`, and maps the fields directly to the Silver Review table schemas.
+- **Integration**: The review data is saved in Parquet, making it immediately available for the Gold layer joins in the next pipeline run.
 
 ---
 *Technical Architecture for the Medallion Data Platform Streaming Layer.*
