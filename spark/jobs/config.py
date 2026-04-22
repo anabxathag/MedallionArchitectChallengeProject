@@ -302,7 +302,8 @@ GOLD_TABLE_SCHEMAS = {
         StructField("review_score", ShortType(), True),
         StructField("review_creation_date", TimestampType(), True),
         StructField("review_answer_timestamp", TimestampType(), True),
-        StructField("response_time_seconds", LongType(), True)
+        StructField("response_time_seconds", LongType(), True),
+        StructField("review_date_key", TimestampType(), True)
     ]),
     "fact_payments": StructType([
         StructField("order_id", StringType(), False),
@@ -310,6 +311,7 @@ GOLD_TABLE_SCHEMAS = {
         StructField("payment_type", StringType(), True),
         StructField("payment_installments", ShortType(), True),
         StructField("payment_value", DecimalType(10, 2), True),
+        StructField("order_date_key", TimestampType(), True),
         StructField("payment_sk", StringType(), True)
     ]),
     "fact_sales": StructType([
@@ -319,6 +321,7 @@ GOLD_TABLE_SCHEMAS = {
         StructField("customer_unique_id", StringType(), True),
         StructField("product_id", StringType(), False),
         StructField("seller_id", StringType(), False),
+        StructField("order_date_key", TimestampType(), True),
         StructField("order_status", StringType(), True),
         StructField("order_purchase_timestamp", TimestampType(), True),
         StructField("order_delivered_customer_date", TimestampType(), True),

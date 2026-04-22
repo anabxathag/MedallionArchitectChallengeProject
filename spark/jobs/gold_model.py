@@ -345,19 +345,56 @@ def build_dim_date():
     write_gold(dim_date, "dim_date", None)
 
 
-def build_fact_sales():
-    """Grain: Order Item. Primary revenue fact table."""
-    # 1. Join Items with Orders to get customer_id
-    # 2. Bridge to df_customers to get customer_unique_id (The permanent ID)
-    fact_sales = df_order_items.join(df_orders.select("order_id", "customer_id", "order_status", "order_purchase_timestamp", "order_delivered_customer_date"), "order_id", "left") \
-        .join(df_customers.select("customer_id", "customer_unique_id"), "customer_id", "left") \
-        .select(
-            "order_id", "order_item_id", "customer_id", "customer_unique_id", "product_id", "seller_id",
-            "order_status", "order_purchase_timestamp", "order_delivered_customer_date",
-            F.col("price").cast(DecimalType(10, 2)).alias("item_price"),
-            F.col("freight_value").cast(DecimalType(10, 2)).alias("item_freight"),
-            F.datediff("order_delivered_customer_date", "order_purchase_timestamp").cast(ShortType()).alias("delivery_delay_days")
-        )
+def build_fact_sales(dim_cust, dim_prod, dim_sell, dim_date):
+    """Grain: Order Item. Primary revenue fact table with SCD2 Point-in-Time lookups."""
+    # 1. Join Items with Orders (Source of truth for purchase time)
+    fact_sales = df_order_items.alias("items") \
+        .join(df_orders.select("order_id", "customer_id", "order_status", "order_purchase_timestamp", "order_delivered_customer_date").alias("orders"), "order_id", "left") \
+        .join(df_customers.select("customer_id", "customer_unique_id").alias("cust_bridge"), "customer_id", "left")
+    
+    # 2. Perform SCD2 Range Joins (Point-In-Time Lookups)
+    # We join with the version of the dimension that was active at purchase time
+    
+    # Customer Lookup
+    fact_sales = fact_sales.join(
+        dim_cust.alias("dc"),
+        (F.col("cust_bridge.customer_unique_id") == F.col("dc.customer_unique_id")) & 
+        (F.col("orders.order_purchase_timestamp") >= F.col("dc.start_date")) & 
+        (F.col("orders.order_purchase_timestamp") < F.coalesce(F.col("dc.end_date"), F.lit("9999-12-31").cast("timestamp"))),
+        "left"
+    )
+    
+    # Product Lookup
+    fact_sales = fact_sales.join(
+        dim_prod.alias("dp"),
+        (F.col("items.product_id") == F.col("dp.product_id")) & 
+        (F.col("orders.order_purchase_timestamp") >= F.col("dp.start_date")) & 
+        (F.col("orders.order_purchase_timestamp") < F.coalesce(F.col("dp.end_date"), F.lit("9999-12-31").cast("timestamp"))),
+        "left"
+    )
+
+    # Seller Lookup
+    fact_sales = fact_sales.join(
+        dim_sell.alias("ds"),
+        (F.col("items.seller_id") == F.col("ds.seller_id")) & 
+        (F.col("orders.order_purchase_timestamp") >= F.col("ds.start_date")) & 
+        (F.col("orders.order_purchase_timestamp") < F.coalesce(F.col("ds.end_date"), F.lit("9999-12-31").cast("timestamp"))),
+        "left"
+    )
+
+    # Date Lookup (Classic Star Schema DateKey)
+    fact_sales = fact_sales.withColumn("order_date_only", F.to_date("order_purchase_timestamp")) \
+        .join(dim_date.alias("dd"), F.col("order_date_only") == F.col("dd.date_key"), "left")
+
+    # 3. Final Selection & Formatting
+    fact_sales = fact_sales.select(
+        "order_id", "order_item_id", "customer_id", "dc.customer_unique_id", "dp.product_id", "ds.seller_id",
+        F.col("dd.date_key").alias("order_date_key"), # Historical/Star Schema reference
+        "order_status", "order_purchase_timestamp", "order_delivered_customer_date",
+        F.col("price").cast(DecimalType(10, 2)).alias("item_price"),
+        F.col("freight_value").cast(DecimalType(10, 2)).alias("item_freight"),
+        F.datediff("order_delivered_customer_date", "order_purchase_timestamp").cast(ShortType()).alias("delivery_delay_days")
+    )
     
     # Add surrogate key for the grain
     fact_sales = add_surrogate_key(fact_sales, ["order_id", "order_item_id"], "sales_sk")
@@ -365,20 +402,24 @@ def build_fact_sales():
     write_gold(fact_sales, "fact_sales", df_order_items)
     return fact_sales
 
-def build_fact_payments():
-    """Grain: Order Payment. Financial analysis fact table."""
-    fact_payments = df_order_payments.select(
-        "order_id", "payment_sequential", "payment_type", 
-        "payment_installments", "payment_value"
-    )
+def build_fact_payments(dim_date):
+    """Grain: Order Payment. Financial analysis fact table with Date lookup."""
+    fact_payments = df_order_payments.join(df_orders.select("order_id", "order_purchase_timestamp"), "order_id", "left") \
+        .withColumn("order_date_only", F.to_date("order_purchase_timestamp")) \
+        .join(dim_date.alias("dd"), F.col("order_date_only") == F.col("dd.date_key"), "left") \
+        .select(
+            "order_id", "payment_sequential", "payment_type", 
+            "payment_installments", "payment_value",
+            F.col("dd.date_key").alias("order_date_key")
+        )
     
     # Add surrogate key
     fact_payments = add_surrogate_key(fact_payments, ["order_id", "payment_sequential"], "payment_sk")
     
     write_gold(fact_payments, "fact_payments", df_order_payments)
 
-def build_fact_reviews():
-    """Grain: Review. Customer satisfaction fact table."""
+def build_fact_reviews(dim_date):
+    """Grain: Review. Customer satisfaction fact table with Date lookup."""
     fact_reviews = df_order_reviews.select(
         "review_id", "order_id", "review_score", 
         "review_creation_date", "review_answer_timestamp",
@@ -389,6 +430,15 @@ def build_fact_reviews():
     # Keeping latest by answer timestamp
     fact_reviews = fact_reviews.withColumn("rn", F.row_number().over(Window.partitionBy("review_id").orderBy(F.col("review_answer_timestamp").desc()))) \
         .filter(F.col("rn") == 1).drop("rn")
+
+    # Date Lookup
+    fact_reviews = fact_reviews.withColumn("review_date_only", F.to_date("review_creation_date")) \
+        .join(dim_date.alias("dd"), F.col("review_date_only") == F.col("dd.date_key"), "left") \
+        .select(
+            "review_id", "order_id", "review_score", 
+            "review_creation_date", "review_answer_timestamp", "response_time_seconds",
+            F.col("dd.date_key").alias("review_date_key")
+        )
 
     write_gold(fact_reviews, "fact_reviews", df_order_reviews)
 
@@ -474,12 +524,19 @@ if __name__ == "__main__":
         for future in dim_tasks:
             future.result()
 
+        # --- OPTIMIZATION: Load & Cache Gold Dimensions for lookups ---
+        print("\n--- Pre-Caching Gold Dimensions for lookups ---")
+        dim_cust = spark.read.parquet(f"{GOLD_PATH}/dim_customers/").cache()
+        dim_prod = spark.read.parquet(f"{GOLD_PATH}/dim_products/").cache()
+        dim_sell = spark.read.parquet(f"{GOLD_PATH}/dim_sellers/").cache()
+        dim_date = spark.read.parquet(f"{GOLD_PATH}/dim_date/").cache()
+
         # Stage 2: Facts (Parallel)
         print("\n--- Stage 2: Facts (Parallel) ---")
-        fact_sales_future = executor.submit(build_fact_sales)
+        fact_sales_future = executor.submit(build_fact_sales, dim_cust, dim_prod, dim_sell, dim_date)
         fact_tasks = [
-            executor.submit(build_fact_payments),
-            executor.submit(build_fact_reviews)
+            executor.submit(build_fact_payments, dim_date),
+            executor.submit(build_fact_reviews, dim_date)
         ]
         
         # Wait for facts
@@ -498,9 +555,10 @@ if __name__ == "__main__":
             future.result()
 
     # --- CLEANUP ---
-    print("\nUnpersisting Silver tables...")
+    print("\nUnpersisting tables...")
     for df in [df_customers, df_geolocation, df_order_items, df_order_payments, 
-               df_order_reviews, df_orders, df_products, df_sellers]:
-        df.unpersist()
+               df_order_reviews, df_orders, df_products, df_sellers,
+               dim_cust, dim_prod, dim_sell, dim_date]:
+        if df: df.unpersist()
 
     print("✅ Gold modeling completed successfully.")
