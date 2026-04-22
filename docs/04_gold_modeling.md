@@ -14,15 +14,16 @@ To track historical changes, we implemented **SCD Type 2** for Customer and Prod
 
 - **Tracking History**: Instead of overwriting a customer's city when they move, we use `start_date`, `end_date`, and an `is_current` flag.
 - **Hashing Logic**: We use `F.hash` on non-key attributes to identify changes. If a mismatch is detected, the current record is expired and a new version is inserted.
-- **Analytical Value**: This allows for "Point-in-Time" reporting—seeing where a customer was located *at the time of a specific sale* years ago.
+- **Point-in-Time Range Joins**: Fact tables link to dimensions using an **Interval Join** logic: `fact.timestamp BETWEEN dim.start_date AND dim.end_date`. This ensures that an order placed in 2017 links to the customer's location *at that timestamp*, even if they moved years later.
 
 ## 3. Advanced Memory Management (OOM Prevention)
 Gold transformations involve complex, multi-way joins that can easily crash a Spark Driver.
 
 - **Broadcast Joins**: We explicitly hint Spark to broadcast smaller dimensions to all executors, avoiding expensive shuffles.
-- **Cache & Unpersist Strategy**:
-    - We `.cache()` the intermediate results of the Fact table joins.
-    - Immediately after the final table is written to MinIO, we call `.unpersist()` to clear the cluster's RAM.
+- **Pre-Cache & Pass Strategy**: 
+    - Shared dimensions (like `dim_date`) are loaded and `.cache()`-ed once in the main block.
+    - These cached DataFrames are passed as arguments to parallel builder functions, preventing redundant disk I/O.
+    - Immediately after Stage 2 (Facts) completes, we call `.unpersist()` on all shared dimensions to free RAM for the Feature Engineering stage.
 - **Localized Casting**: We cast columns to their final types *late* in the process to keep the shuffle payload light.
 
 ## 4. Star Schema Validation
@@ -48,9 +49,9 @@ Facts store quantitative measurements and link to dimensions via surrogate keys.
 
 | Table Name | Grain / Logic | Business Impact |
 | :--- | :--- | :--- |
-| **`fact_sales`** | Order Item / High-precision Decimal types. | The source of truth for **Revenue Reporting** with 100% accuracy. |
-| **`fact_payments`** | Order Payment / Captures sequential transaction IDs. | Enables **Financial Risk Analysis** and installment tracking. |
-| **`fact_reviews`** | Review Event / Calculates response latency in seconds. | Monitors **Customer Satisfaction (CSAT)** and seller response efficiency. |
+| **`fact_sales`** | Order Item / **SCD2 Point-in-Time** lookups for Customer, Product, and Seller. / Includes `order_date_key`. | High-accuracy historical revenue reporting. |
+| **`fact_payments`** | Order Payment / Includes `order_date_key` via Order lookup. | Supports temporal financial modeling and installment latency tracks. |
+| **`fact_reviews`** | Review Event / Includes `review_date_key` for calendar alignment. | Monitors CSAT seasonality and response efficiency. |
 
 ### 6.3 Feature Tables (Intelligence)
 Aggregated datasets for Machine Learning and Executive dashboards.

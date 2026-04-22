@@ -70,6 +70,7 @@ The project implements a Star Schema in the Gold layer, optimized for analytical
     *   **Alerting**: Real-time Discord notifications for pipeline success and failures.
 2.  **Advanced Data Modeling**:
     *   **SCD Type 2**: History tracking for Customers, Products, and Sellers.
+    *   **Point-in-Time Join Logic**: Fact tables use range joins to link to the corresponding version of historical dimensions.
     *   **Star Schema**: Optimization for BI tool performance.
     *   **Feature Engineering**: Pre-computed RFM (Recency, Frequency, Monetary) tables.
 3.  **Real-World Reliability**:
